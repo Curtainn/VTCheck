@@ -1,0 +1,74 @@
+import psutil
+import os
+import requests
+import hashlib
+
+# Function to get the hash of the executable file
+def get_file_hash(file_path):
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as f:
+            # Read and update the hash
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    except Exception as e:
+        print(f"Error calculating hash for {file_path}: {e}")
+        return None
+
+# Function to check the reputation of a process using VirusTotal
+def check_virustotal(hash):
+    api_key = "YOUR_VIRUSTOTAL_API_KEY"  # Replace with your own VirusTotal API key
+    url = f"https://www.virustotal.com/api/v3/files/{hash}"
+    headers = {"x-apikey": api_key}
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            # Checking the reputation score
+            if data['data']['attributes']['last_analysis_stats']['malicious'] > 0:
+                return False  # If the process is malicious
+            else:
+                return True  # If the process is legitimate
+        else:
+            print(f"Error in VirusTotal response: {response.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"Error connecting to VirusTotal: {e}")
+        return None
+
+# Main function to inspect running processes
+def inspect_processes():
+    for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
+        try:
+            pid = proc.info['pid']
+            name = proc.info['name']
+            exe_path = proc.info['exe']
+            cmdline = proc.info['cmdline']
+
+            # If the executable path is suspicious or belongs to a system program
+            if exe_path and exe_path.lower().endswith('.exe'):
+                # Check the executable path (avoid non-standard paths)
+                if "windows" in exe_path.lower() or "program files" in exe_path.lower():
+                    print(f"Valid process found: {name} - PID: {pid}")
+                else:
+                    print(f"Suspicious process found: {name} - PID: {pid}")
+                    print(f"Arguments: {cmdline}")
+                    print(f"Executable path: {exe_path}")
+
+                    # Check the file hash for reputation
+                    file_hash = get_file_hash(exe_path)
+                    if file_hash:
+                        print(f"Checking reputation via VirusTotal for the file {exe_path}...")
+                        if check_virustotal(file_hash):
+                            print("The process is legitimate according to VirusTotal.")
+                        else:
+                            print("The process is potentially malicious according to VirusTotal.")
+                    else:
+                        print("Unable to calculate the file hash.")
+            
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+
+if __name__ == "__main__":
+    inspect_processes()
